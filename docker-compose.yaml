@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    container_name: ip-country-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ipdb
+    volumes:
+      - .:/app
+
+  postgres:
+    image: postgres:17
+    container_name: ip-country-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ipdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
