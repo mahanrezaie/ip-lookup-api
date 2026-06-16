@@ -1,5 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, Response
+from fastapi import FastAPI, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
+from geoip2.database import Reader
+import time
+
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.database import SessionLocal, engine, Base, check_db
 from app.schemas import CountryResponse
@@ -9,12 +13,24 @@ from app.services.geoip_service import (
     lookup_ip,
     save
 )
-from geoip2.database import Reader
 
-# create tables (simple approach for interview)
-Base.metadata.create_all(bind=engine)
+from app.metrics import (
+    HTTP_REQUESTS_TOTAL,
+    HTTP_REQUEST_DURATION_SECONDS
+)
 
+# -------------------------
+# App
+# -------------------------
 app = FastAPI(title="IP Country Service")
+
+
+# -------------------------
+# Startup
+# -------------------------
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
 
 
 # -------------------------
@@ -36,7 +52,35 @@ def get_reader():
 
 
 # -------------------------
-# LIVENESS (process health only)
+# Metrics middleware
+# -------------------------
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start = time.time()
+
+    response = await call_next(request)
+
+    duration = time.time() - start
+
+    endpoint = request.url.path
+    method = request.method
+    status = response.status_code
+
+    HTTP_REQUESTS_TOTAL.labels(
+        method=method,
+        endpoint=endpoint,
+        status=status
+    ).inc()
+
+    HTTP_REQUEST_DURATION_SECONDS.labels(
+        endpoint=endpoint
+    ).observe(duration)
+
+    return response
+
+
+# -------------------------
+# Health: live
 # -------------------------
 @app.get("/health/live")
 def live():
@@ -44,7 +88,7 @@ def live():
 
 
 # -------------------------
-# READINESS (DB-aware)
+# Health: ready
 # -------------------------
 @app.get("/health/ready")
 def ready(response: Response):
@@ -53,6 +97,18 @@ def ready(response: Response):
         return {"status": "not ready", "db": "down"}
 
     return {"status": "ready", "db": "up"}
+
+
+# -------------------------
+# Metrics endpoint
+# -------------------------
+@app.get("/metrics")
+def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
+
 
 # -------------------------
 # Main endpoint
@@ -64,13 +120,11 @@ def get_country(
     reader: Reader = Depends(get_reader)
 ):
 
-    # 1. validate IP
     try:
         ip = validate_ip(ip)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid IP address")
 
-    # 2. check cache (DB)
     record = get_from_db(db, ip)
 
     if record:
@@ -81,13 +135,10 @@ def get_country(
             "cached": True
         }
 
-    # 3. lookup GeoIP
     country = lookup_ip(ip, reader)
 
-    # 4. save to DB
     record = save(db, ip, country)
 
-    # 5. return response
     return {
         "ip": record.ip_address,
         "country_code": record.country_code,
