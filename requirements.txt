@@ -4,3 +4,4 @@ sqlalchemy
 psycopg2-binary
 geoip2
 pydantic
+prometheus_client
