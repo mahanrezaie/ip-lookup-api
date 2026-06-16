@@ -20,3 +20,11 @@ SessionLocal = sessionmaker(
 
 # Base class for all models
 Base = declarative_base()
+
+def check_db() -> bool:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except OperationalError:
+        return False

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal, engine, Base
+from app.database import SessionLocal, engine, Base, check_db
 from app.schemas import CountryResponse
 from app.services.geoip_service import (
     validate_ip,
@@ -36,12 +36,23 @@ def get_reader():
 
 
 # -------------------------
-# Health check
+# LIVENESS (process health only)
 # -------------------------
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+@app.get("/health/live")
+def live():
+    return {"status": "alive"}
 
+
+# -------------------------
+# READINESS (DB-aware)
+# -------------------------
+@app.get("/health/ready")
+def ready(response: Response):
+    if not check_db():
+        response.status_code = 503
+        return {"status": "not ready", "db": "down"}
+
+    return {"status": "ready", "db": "up"}
 
 # -------------------------
 # Main endpoint
